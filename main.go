@@ -22,32 +22,27 @@ type HclVar struct {
 	Sensitive   bool
 }
 
-const (
-	variablesFilename = "variables.tf"
-	outputFilename    = "outputs.tf"
-)
-
 var (
-	verboseFlag       bool   // Verbose mode.
-	variablesFileFlag string // Path to variables file.
-	outputsFileFlag   string // Path to outputs file.
-	lg                cliLogger
+	variablesFilePath string
+	outputsFilePath   string
+
+	verboseFlag           bool   // Verbose mode.
+	variablesFilePathFlag string // Path to variables file.
+	outputsFilePathFlag   string // Path to outputs file.
+	lg                    cliLogger
 )
 
 func init() {
 	flag.BoolVar(&verboseFlag, "v", false, "verbose mode")
-	flag.StringVar(&variablesFileFlag, "variables", "", "path to variables file")
-	flag.StringVar(&outputsFileFlag, "outputs", "", "path to outputs file")
+	flag.StringVar(&variablesFilePathFlag, "variables", "", "path to variables file")
+	flag.StringVar(&outputsFilePathFlag, "outputs", "", "path to outputs file")
 	flag.Parse()
+
+	setupFilePaths()
 }
 
 // exists returns false if the given file does not exist, true otherwise.
 func exists(name string) ([]byte, bool) {
-	if _, err := os.Stat(variablesFilename); err != nil {
-		if os.IsNotExist(err) {
-			return nil, false
-		}
-	}
 	out, err := ioutil.ReadFile("./" + name)
 	if err != nil {
 		lg.debugf("Error reading %s: %s", name, err)
@@ -65,6 +60,21 @@ func printTitle() {
 	fmt.Printf("\n# %s Terraform Module\n", strings.ToTitle(filepath.Base(wd)))
 }
 
+// Sets variables and outputs file paths to flag vals if provided, defaults otherwise.
+func setupFilePaths() {
+	if variablesFilePathFlag != "" {
+		variablesFilePath = variablesFilePathFlag
+	} else {
+		variablesFilePath = "variables.tf"
+	}
+
+	if outputsFilePathFlag != "" {
+		outputsFilePath = outputsFilePathFlag
+	} else {
+		outputsFilePath = "outputs.tf"
+	}
+}
+
 func main() {
 	printTitle()
 
@@ -72,7 +82,7 @@ func main() {
 	fmt.Printf("\n## Overview\n\n")
 
 	// Handle input variables.
-	if rawInputs, ok := exists(variablesFilename); ok {
+	if rawInputs, ok := exists(variablesFilePath); ok {
 		var hclInput interface{}
 		if err := hcl.Unmarshal(rawInputs, &hclInput); err != nil {
 			lg.Fatalf("Error unmarshalling input: %s", err)
@@ -124,7 +134,7 @@ func main() {
 	}
 
 	// Handle outputs.
-	if rawOutputs, ok := exists(outputFilename); ok {
+	if rawOutputs, ok := exists(outputsFilePath); ok {
 		var hclOut interface{}
 		if err := hcl.Unmarshal(rawOutputs, &hclOut); err != nil {
 			lg.Fatalf("Error unmarshalling: %s", err)
