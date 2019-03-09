@@ -50,9 +50,9 @@ from within the current directory. The README content is output to stdout.
 
 ## Usage
 
-```
+\```
 
-```
+\```
 
 ## Troubleshooting
 
