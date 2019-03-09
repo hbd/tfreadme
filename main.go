@@ -38,14 +38,14 @@ func init() {
 	flag.StringVar(&outputsFilePathFlag, "outputs", "", "path to outputs file")
 	flag.Parse()
 
-	setupFilePaths()
+	setupFilePaths() // Set to flag vals or defaults.
 }
 
 // exists returns false if the given file does not exist, true otherwise.
-func exists(name string) ([]byte, bool) {
-	out, err := ioutil.ReadFile("./" + name)
+func exists(path string) ([]byte, bool) {
+	out, err := ioutil.ReadFile("./" + path)
 	if err != nil {
-		lg.debugf("Error reading %s: %s", name, err)
+		lg.debugf("Error reading %s: %s", path, err)
 		return nil, false
 	}
 	return out, true
