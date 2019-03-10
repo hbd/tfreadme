@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/hcl"
+	"github.com/pkg/errors"
 )
 
 // HCLVar is a parsed HCL variable.
@@ -23,13 +25,37 @@ type HCLVar struct {
 	Sensitive   bool
 }
 
-func printTitle() {
+func printTitle(w io.Writer) error {
 	// Construct the title header.
 	wd, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("Error getting working dir: %s", err)
+		return errors.Wrap(err, "Getwd")
 	}
-	fmt.Printf("\n# %s Terraform Module\n", strings.ToTitle(filepath.Base(wd)))
+	_, err = fmt.Fprintf(w, "\n# %s Terraform Module\n", strings.ToTitle(filepath.Base(wd)))
+	return errors.Wrap(err, "write stream")
+}
+
+func hclTable(vars []map[string]interface{}) []HCLVar {
+	hclVars := make([]HCLVar, 0, len(vars))
+
+	for _, varmap := range vars {
+		for name, v := range varmap {
+			for _, x := range v.([]map[string]interface{}) {
+				var hclVar HCLVar
+
+				hclVar.Name = name
+				hclVar.Description, _ = x["description"].(string)
+				hclVar.VarType, _ = x["type"].(string)
+				hclVar.DefaultVal, _ = x["default"].(string)
+				hclVar.Required = hclVar.DefaultVal == ""
+				hclVar.Sensitive, _ = x["sensitive"].(bool)
+
+				hclVars = append(hclVars, hclVar)
+			}
+		}
+	}
+
+	return hclVars
 }
 
 func main() {
@@ -40,20 +66,24 @@ func main() {
 	)
 	flag.Parse()
 
-	printTitle()
+	w := os.Stdout
+	if err := printTitle(w); err != nil {
+		log.Fatalf("Error printing title: %s.", err)
+	}
 
 	// Overview.
-	fmt.Printf("\n## Overview\n\n")
+	if _, err := fmt.Fprintf(w, "\n## Overview\n\n"); err != nil {
+		log.Fatalf("Error printing overview: %s.", err)
+	}
 
 	// Handle input variables.
 	rawInputs, err := ioutil.ReadFile(*variablesFile)
 	if err != nil {
 		log.Fatalf("Error reading variables file %q: %s.", *variablesFile, err)
 	}
-
 	var hclInput interface{}
 	if err := hcl.Unmarshal(rawInputs, &hclInput); err != nil {
-		log.Fatalf("Error unmarshalling input: %s", err)
+		log.Fatalf("Error unmarshalling input: %s.", err)
 	}
 
 	vars, ok := hclInput.(map[string]interface{})["variable"]
@@ -61,40 +91,19 @@ func main() {
 		log.Printf("No variables detected.")
 	}
 
-	hclVars := make([]HCLVar, len(vars.([]map[string]interface{})))
-	var desc, varType, defaultVal string
-	for varindex, varmap := range vars.([]map[string]interface{}) {
-		for name, v := range varmap {
-			for _, x := range v.([]map[string]interface{}) {
-				desc, _ = x["description"].(string)
-				varType, _ = x["type"].(string)
-				defaultVal, _ = x["default"].(string)
-				hclvar := HCLVar{
-					Name:        name,
-					Description: desc,
-					VarType:     varType,
-					DefaultVal:  defaultVal,
-				}
-				if defaultVal != "" {
-					hclvar.Required = true
-				} else {
-					hclvar.Required = false
-				}
-				hclVars[varindex] = hclvar
-			}
-		}
-	}
+	hclVars := hclTable(vars.([]map[string]interface{}))
 
 	// Format and print Inputs.
 	inputTmpl, err := template.New("hclvar_input").Parse("| {{.Name}} | {{.Description}} | {{.VarType}} | {{.DefaultVal}} | {{if .Required}} yes {{else}} no {{end}} |\n")
 	if err != nil {
-		log.Fatalf("Error templating input: %s", err)
+		log.Fatalf("Error templating input: %s.", err)
 	}
-	fmt.Printf("\n## Input\n\n")
-	fmt.Println("| Name | Description | Type | Default | Required |")
-	fmt.Println("|------|-------------|:----:|:-----:|:-----:|")
+	// TODO: Handle errors.
+	_, _ = fmt.Fprintf(w, "\n## Input\n\n")
+	_, _ = fmt.Fprintln(w, "| Name | Description | Type | Default | Required |")
+	_, _ = fmt.Fprintln(w, "|------|-------------|:----:|:-----:|:-----:|")
 	for _, hclvar := range hclVars {
-		if err := inputTmpl.Execute(os.Stdout, hclvar); err != nil {
+		if err := inputTmpl.Execute(w, hclvar); err != nil {
 			log.Fatalf("Error executing input on template: %s", err)
 		}
 	}
@@ -106,7 +115,7 @@ func main() {
 	}
 	var hclOut interface{}
 	if err := hcl.Unmarshal(rawOutputs, &hclOut); err != nil {
-		log.Fatalf("Error unmarshalling: %s", err)
+		log.Fatalf("Error unmarshalling: %s.", err)
 	}
 
 	outputs, ok := hclOut.(map[string]interface{})["output"]
@@ -115,42 +124,28 @@ func main() {
 	}
 
 	// NOTE: This smells fishy.
-	hclOutputs := make([]HCLVar, 0, len(outputs.([]map[string]interface{})))
-	var outputDesc string
-	var outputIsSensitive bool
-	for _, outmap := range outputs.([]map[string]interface{}) {
-		for name, v := range outmap {
-			for _, x := range v.([]map[string]interface{}) {
-				outputDesc, _ = x["description"].(string)
-				outputIsSensitive, _ = x["sensitive"].(bool)
-				hclvar := HCLVar{
-					Name:        name,
-					Description: outputDesc,
-					Sensitive:   outputIsSensitive,
-				}
-				hclOutputs = append(hclOutputs, hclvar)
-			}
-		}
-	}
+	hclOutputs := hclTable(outputs.([]map[string]interface{}))
 
 	// Format and print Outputs.
 	outputTmpl, err := template.New("hclvar_output").Parse("| {{.Name}} | {{.Description}} |  {{if .Sensitive}} yes {{else}} no {{end}} |\n")
 	if err != nil {
 		log.Fatalf("Error templating output: %s.", err)
 	}
-	fmt.Printf("\n## Output\n\n")
-	fmt.Println("| Name | Description | Sensitive |")
-	fmt.Println("|------|-------------|:----:|")
+	// TODO: Handle errors.
+	_, _ = fmt.Fprintf(w, "\n## Output\n\n")
+	_, _ = fmt.Fprintln(w, "| Name | Description | Sensitive |")
+	_, _ = fmt.Fprintln(w, "|------|-------------|:----:|")
 	for _, out := range hclOutputs {
-		if err := outputTmpl.Execute(os.Stdout, out); err != nil {
+		if err := outputTmpl.Execute(w, out); err != nil {
 			log.Fatalf("Error executing output on template: %s", err)
 		}
 	}
 
+	// TODO: Handle errors.
 	// Usage.
-	fmt.Printf("\n## Usage\n")
-	fmt.Printf("\n```\n\n```\n")
+	_, _ = fmt.Fprintf(w, "\n## Usage\n")
+	_, _ = fmt.Fprintf(w, "\n```\n\n```\n")
 
 	// Troubleshooting.
-	fmt.Printf("\n## Troubleshooting\n\n")
+	_, _ = fmt.Fprintf(w, "\n## Troubleshooting\n\n")
 }
