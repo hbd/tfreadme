@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,6 @@ var (
 	verboseFlag           bool   // Verbose mode.
 	variablesFilePathFlag string // Path to variables file.
 	outputsFilePathFlag   string // Path to outputs file.
-	lg                    cliLogger
 )
 
 func init() {
@@ -45,7 +45,7 @@ func init() {
 func exists(path string) ([]byte, bool) {
 	out, err := ioutil.ReadFile("./" + path)
 	if err != nil {
-		lg.debugf("Error reading %s: %s", path, err)
+		log.Printf("Error reading %s: %s", path, err)
 		return nil, false
 	}
 	return out, true
@@ -55,7 +55,7 @@ func printTitle() {
 	// Construct the title header.
 	wd, err := os.Getwd()
 	if err != nil {
-		lg.Fatalf("Error getting working dir: %s", err)
+		log.Fatalf("Error getting working dir: %s", err)
 	}
 	fmt.Printf("\n# %s Terraform Module\n", strings.ToTitle(filepath.Base(wd)))
 }
@@ -85,12 +85,12 @@ func main() {
 	if rawInputs, ok := exists(variablesFilePath); ok {
 		var hclInput interface{}
 		if err := hcl.Unmarshal(rawInputs, &hclInput); err != nil {
-			lg.Fatalf("Error unmarshalling input: %s", err)
+			log.Fatalf("Error unmarshalling input: %s", err)
 		}
 
 		vars, ok := hclInput.(map[string]interface{})["variable"]
 		if !ok && verboseFlag {
-			lg.Printf("No variables detected.")
+			log.Printf("No variables detected.")
 		}
 
 		hclVars := make([]HclVar, len(vars.([]map[string]interface{})))
@@ -120,7 +120,7 @@ func main() {
 		// Format and print Inputs.
 		inputTmpl, err := template.New("hclvar_input").Parse("| {{.Name}} | {{.Description}} | {{.VarType}} | {{.DefaultVal}} | {{if .Required}} yes {{else}} no {{end}} |\n")
 		if err != nil {
-			lg.Fatalf("Error templating input: %s", err)
+			log.Fatalf("Error templating input: %s", err)
 		}
 		fmt.Printf("\n## Input\n\n")
 		fmt.Println("| Name | Description | Type | Default | Required |")
@@ -128,7 +128,7 @@ func main() {
 		for _, hclvar := range hclVars {
 			err = inputTmpl.Execute(os.Stdout, hclvar)
 			if err != nil {
-				lg.Fatalf("Error executing input on template: %s", err)
+				log.Fatalf("Error executing input on template: %s", err)
 			}
 		}
 	}
@@ -137,12 +137,12 @@ func main() {
 	if rawOutputs, ok := exists(outputsFilePath); ok {
 		var hclOut interface{}
 		if err := hcl.Unmarshal(rawOutputs, &hclOut); err != nil {
-			lg.Fatalf("Error unmarshalling: %s", err)
+			log.Fatalf("Error unmarshalling: %s", err)
 		}
 
 		outputs, ok := hclOut.(map[string]interface{})["output"]
 		if !ok && verboseFlag {
-			lg.Printf("No outputs detected.")
+			log.Printf("No outputs detected.")
 		}
 
 		hclOutputs := make([]HclVar, len(outputs.([]map[string]interface{})))
@@ -166,7 +166,7 @@ func main() {
 		// Format and print Outputs.
 		outputTmpl, err := template.New("hclvar_output").Parse("| {{.Name}} | {{.Description}} |  {{if .Sensitive}} yes {{else}} no {{end}} |\n")
 		if err != nil {
-			lg.Fatalf("Error templating output: %s", err)
+			log.Fatalf("Error templating output: %s", err)
 		}
 		fmt.Printf("\n## Output\n\n")
 		fmt.Println("| Name | Description | Sensitive |")
@@ -174,7 +174,7 @@ func main() {
 		for _, out := range hclOutputs {
 			err = outputTmpl.Execute(os.Stdout, out)
 			if err != nil {
-				lg.Fatalf("Error executing output on template: %s", err)
+				log.Fatalf("Error executing output on template: %s", err)
 			}
 		}
 	}
