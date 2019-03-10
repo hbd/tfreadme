@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/hashicorp/hcl"
 	"github.com/pkg/errors"
@@ -58,6 +59,75 @@ func hclTable(vars []map[string]interface{}) []HCLVar {
 	return hclVars
 }
 
+type mdAlign int
+
+const (
+	none mdAlign = iota
+	left
+	right
+	center
+)
+
+type mdColumn struct {
+	Name    string
+	Align   mdAlign
+	Mapping func(interface{}) interface{}
+}
+
+type mdTable struct {
+	columns []mdColumn
+	rows    [][]interface{}
+}
+
+func markdownTable(w io.Writer, table mdTable) error {
+	if len(table.columns) < 1 {
+		return errors.New("no columns to render")
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 0, ' ', tabwriter.Debug)
+
+	// Print the column names.
+	_, _ = fmt.Fprint(tw, "| ")
+	for _, c := range table.columns {
+		_, _ = fmt.Fprintf(tw, " %s \t", c.Name)
+	}
+	_, _ = fmt.Fprint(tw, "\n")
+
+	// Print the table header separator.
+	_, _ = fmt.Fprint(tw, "|")
+	for _, c := range table.columns {
+		switch c.Align {
+		case none, right:
+			_, _ = fmt.Fprint(tw, "-")
+		case center, left:
+			_, _ = fmt.Fprint(tw, ":")
+		}
+		_, _ = fmt.Fprintf(tw, "%s", strings.Repeat("-", len(c.Name)))
+		switch c.Align {
+		case none, left:
+			_, _ = fmt.Fprint(tw, "-")
+		case center, right:
+			_, _ = fmt.Fprint(tw, ":")
+		}
+		_, _ = fmt.Fprint(tw, "\t")
+	}
+	_, _ = fmt.Fprint(tw, "\n")
+
+	// Print the rows.
+	for _, row := range table.rows {
+		_, _ = fmt.Fprint(tw, "|")
+		for i, c := range table.columns {
+			val := row[i]
+			if c.Mapping != nil {
+				val = c.Mapping(val)
+			}
+			_, _ = fmt.Fprintf(tw, " %v \t", val)
+		}
+		_, _ = fmt.Fprintf(tw, "\n")
+	}
+
+	return tw.Flush()
+}
+
 func main() {
 	var (
 		verbose       = flag.Bool("v", false, "verbose mode")
@@ -93,19 +163,36 @@ func main() {
 
 	hclVars := hclTable(vars.([]map[string]interface{}))
 
-	// Format and print Inputs.
-	inputTmpl, err := template.New("hclvar_input").Parse("| {{.Name}} | {{.Description}} | {{.VarType}} | {{.DefaultVal}} | {{if .Required}} yes {{else}} no {{end}} |\n")
-	if err != nil {
-		log.Fatalf("Error templating input: %s.", err)
-	}
-	// TODO: Handle errors.
-	_, _ = fmt.Fprintf(w, "\n## Input\n\n")
-	_, _ = fmt.Fprintln(w, "| Name | Description | Type | Default | Required |")
-	_, _ = fmt.Fprintln(w, "|------|-------------|:----:|:-----:|:-----:|")
-	for _, hclvar := range hclVars {
-		if err := inputTmpl.Execute(w, hclvar); err != nil {
-			log.Fatalf("Error executing input on template: %s", err)
+	boolFmt := func(in interface{}) interface{} {
+		if in.(bool) {
+			return "yes"
 		}
+		return "no"
+	}
+
+	_, _ = fmt.Fprintf(w, "\n## Input\n\n")
+
+	variablesTable := mdTable{
+		columns: []mdColumn{
+			{Name: "Name", Align: none},
+			{Name: "Description", Align: left},
+			{Name: "Type", Align: center},
+			{Name: "Default", Align: center},
+			{Name: "Required", Align: center, Mapping: boolFmt},
+		},
+	}
+	for _, hclvar := range hclVars {
+		variablesTable.rows = append(variablesTable.rows, []interface{}{
+			hclvar.Name,
+			hclvar.Description,
+			hclvar.VarType,
+			hclvar.DefaultVal,
+			hclvar.Required,
+		})
+	}
+
+	if err := markdownTable(w, variablesTable); err != nil {
+		log.Fatalf("Error printing variables md table: %s.", err)
 	}
 
 	// Handle outputs.
